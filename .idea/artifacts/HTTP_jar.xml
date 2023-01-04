@@ -2,7 +2,7 @@
   <artifact type="jar" name="HTTP:jar">
     <output-path>$PROJECT_DIR$/out/artifacts/HTTP_jar</output-path>
     <root id="archive" name="HTTP.jar">
-      <element id="module-output" name="HTTP" />
+      <element id="module-output" name="http-server" />
       <element id="directory" name="META-INF">
         <element id="file-copy" path="$PROJECT_DIR$/META-INF/MANIFEST.MF" />
       </element>
