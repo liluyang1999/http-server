@@ -1,12 +1,10 @@
 import com.sun.net.httpserver.HttpExchange;
 
-import java.io.BufferedInputStream;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.util.LinkedList;
 import java.util.List;
-import java.util.Scanner;
 import java.util.stream.Stream;
 
 public class Test {
