@@ -1,99 +1,108 @@
-import com.google.gson.Gson;
+import com.google.gson.stream.JsonReader;
+import com.google.gson.stream.JsonToken;
 import com.sun.net.httpserver.HttpExchange;
 import com.sun.net.httpserver.HttpHandler;
-
 import java.io.IOException;
 import java.io.InputStream;
-import java.net.URI;
+import java.io.StringReader;
+import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CodingErrorAction;
+import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
+import java.util.Locale;
+import java.util.Set;
 
-public class MyHttpHandler implements HttpHandler {
+public final class MyHttpHandler implements HttpHandler {
+    public static final int MAX_BODY_BYTES = 8192;
+    private final HandlerUtil replies = new HandlerUtil();
+    private record Calculation(String operation, double left, double right) {}
 
-    @Override
-    public void handle(HttpExchange exchange) {
-        String requestMethod = exchange.getRequestMethod();
-        if ("GET".equalsIgnoreCase(requestMethod)) {
-            //The request method is "GET"
-            URI requestURI = exchange.getRequestURI();
-            String path = requestURI.getRawPath();
-            String operation;
-            String[] params;
-            params = path.split("/");
-
-            if(params.length == 0 || params.length == 1) {
-                handlerUtil.sendErrorContent(exchange, Status.NF, NOT_FOUND);
-                return;
-            }
-
-            operation = params[1];
-            if (!Main.operations.contains(operation)) {
-                //Arithmetic method can't be recognized
-                handlerUtil.sendErrorContent(exchange, Status.NF, NOT_FOUND);
+    @Override public void handle(HttpExchange exchange) throws IOException {
+        try {
+            String method = exchange.getRequestMethod();
+            String path = exchange.getRequestURI().getRawPath();
+            if ("GET".equals(method)) {
+                if ("/".equals(path) || "/demo".equals(path)) {
+                    try (InputStream page = getClass().getResourceAsStream("/web/index.html")) {
+                        if (page == null) throw new IOException("Missing packaged demo page");
+                        exchange.getResponseHeaders().set("Content-Security-Policy",
+                                "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'");
+                        replies.send(exchange, 200, "text/html; charset=utf-8", new String(page.readAllBytes(), StandardCharsets.UTF_8));
+                    }
+                    return;
+                }
+                String[] parts = path.split("/", -1);
+                if (parts.length != 4 || !Arithmetic.OPERATIONS.contains(parts[1].toLowerCase(Locale.ROOT))) {
+                    replies.sendErrorContent(exchange, Status.NF, "Unknown arithmetic route");
+                    return;
+                }
+                double value = Arithmetic.calculate(parts[1], Double.parseDouble(parts[2]), Double.parseDouble(parts[3]));
+                replies.sendContentByPlain(exchange, value);
+            } else if ("POST".equals(method)) {
+                if (!"/".equals(path) && !"/calculate".equals(path)) {
+                    replies.sendErrorContent(exchange, Status.NF, "Unknown route");
+                    return;
+                }
+                String contentType = exchange.getRequestHeaders().getFirst("Content-Type");
+                if (contentType != null && !contentType.split(";", 2)[0].trim().equalsIgnoreCase("application/json")) {
+                    replies.send(exchange, 415, "text/plain; charset=utf-8", "Use application/json\n");
+                    return;
+                }
+                byte[] bytes = exchange.getRequestBody().readNBytes(MAX_BODY_BYTES + 1);
+                if (bytes.length > MAX_BODY_BYTES) {
+                    replies.send(exchange, 413, "text/plain; charset=utf-8", "Request body exceeds 8192 bytes\n");
+                    return;
+                }
+                String json = StandardCharsets.UTF_8.newDecoder().onMalformedInput(CodingErrorAction.REPORT)
+                        .onUnmappableCharacter(CodingErrorAction.REPORT).decode(ByteBuffer.wrap(bytes)).toString();
+                Calculation calculation = parse(json);
+                replies.sendContentByJson(exchange, Arithmetic.calculate(calculation.operation(), calculation.left(), calculation.right()));
             } else {
-                //Check the arithmetic arguments
-                if(params.length == 4) {
-                    try {
-                        Double argument1 = Double.parseDouble(params[2]);
-                        Double argument2 = Double.parseDouble(params[3]);
-                        Number result = calculate(argument1, argument2, operation);
-                        handlerUtil.sendContentByPlain(exchange, result);
-                    } catch (NumberFormatException e) {
-                        handlerUtil.sendErrorContent(exchange, Status.BR, BAD_REQUEST);
-                    }
-                } else {
-                    handlerUtil.sendErrorContent(exchange, Status.NF, NOT_FOUND);
-                }
+                exchange.getResponseHeaders().set("Allow", "GET, POST");
+                replies.sendErrorContent(exchange, Status.MNA, "Only GET and POST are supported");
             }
-        } else if ("POST".equalsIgnoreCase(requestMethod)) {
-            //The request method is "POST"
-            try {
-                HandlerUtil.Params params;
-                InputStream requestBody = exchange.getRequestBody();
-                String paramsJsonString = new String(requestBody.readAllBytes()).trim();
-                try {
-                    params = new Gson().fromJson(paramsJsonString, HandlerUtil.Params.class);
-                    if(params.operation == null || !Main.operations.contains(params.operation)
-                            || params.arguments == null || params.arguments.length != 2) {
-                        handlerUtil.sendErrorContent(exchange, Status.BR, BAD_REQUEST);
-                    } else {
-                        Number result = calculate(params.arguments[0], params.arguments[1], params.operation);
-                        handlerUtil.sendContentByJson(exchange, result);
-                    }
-                } catch (Exception e) {
-                    handlerUtil.sendErrorContent(exchange, Status.BR, BAD_REQUEST);
-                }
-            } catch (IOException e) {
-                handlerUtil.sendErrorContent(exchange, Status.IE, INTERNAL_SERVER_ERROR);
-            }
-        } else {
-            //The request method can't be processed by the server
-            handlerUtil.sendErrorContent(exchange, Status.MNA, METHOD_NOT_ALLOWED);
+        } catch (CharacterCodingException | IllegalArgumentException | IllegalStateException e) {
+            replies.sendErrorContent(exchange, Status.BR, "Invalid input: expected an operation and two finite numbers");
+        } finally {
+            exchange.close();
         }
     }
 
-    private Double calculate(Double param1, Double param2, String operation) {
-        String type = operation.toLowerCase();
-        double result = 0.0;
-        switch (type) {
-            case "add" -> result = param1 + param2;
-            case "subtract" -> result = param1 - param2;
-            case "multiply" -> result = param1 * param2;
-            case "divide" -> {
-                                if (param2 == 0.0) throw new NumberFormatException();
-                                result = param1 / param2;
-                              }
+    private static Calculation parse(String json) {
+        // Read directly with JsonReader: Gson.fromJson would temporarily enable lenient mode.
+        try (JsonReader reader = new JsonReader(new StringReader(json))) {
+            reader.setLenient(false);
+            String operation = null;
+            double[] values = null;
+            Set<String> seen = new HashSet<>();
+            reader.beginObject();
+            while (reader.hasNext()) {
+                String name = reader.nextName().toLowerCase(Locale.ROOT);
+                if (!seen.add(name)) throw new IllegalArgumentException("duplicate field");
+                switch (name) {
+                    case "operation" -> {
+                        if (reader.peek() != JsonToken.STRING) throw new IllegalArgumentException("operation must be a string");
+                        operation = Arithmetic.operation(reader.nextString());
+                    }
+                    case "arguments" -> {
+                        values = new double[2];
+                        reader.beginArray();
+                        for (int i = 0; i < 2; i++) {
+                            if (reader.peek() != JsonToken.NUMBER) throw new IllegalArgumentException("two numbers required");
+                            values[i] = Double.parseDouble(reader.nextString());
+                        }
+                        reader.endArray();
+                    }
+                    default -> throw new IllegalArgumentException("unknown field");
+                }
+            }
+            reader.endObject();
+            if (reader.peek() != JsonToken.END_DOCUMENT || operation == null || values == null)
+                throw new IllegalArgumentException("incomplete JSON object");
+            return new Calculation(operation, values[0], values[1]);
+        } catch (IOException e) {
+            throw new IllegalArgumentException("Malformed JSON", e);
         }
-        return result;
     }
-
-    private final HandlerUtil handlerUtil;
-
-    public MyHttpHandler() {
-        this.handlerUtil = new HandlerUtil();
-    }
-
-    public static final String NOT_FOUND = "The requested URL is not found, please check the URL";
-    public static final String BAD_REQUEST = "The request can't be fulfilled due to bad syntax in params";
-    public static final String INTERNAL_SERVER_ERROR = "Internal server error happens";
-    public static final String METHOD_NOT_ALLOWED = "The request method is not allowed by the server";
-
 }

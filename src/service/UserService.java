@@ -11,7 +11,7 @@ public class UserService {
         this.userDao = new UserDao();
     }
 
-    //登陆业务方法
+    // Look up the fixed demonstration user; this is not a login operation.
     public User getUserByUsername(String username) {
         User user = userDao.selectUser();
         if (user.getUsername().equals(username)) {
@@ -22,20 +22,3 @@ public class UserService {
     }
 
 }
-
-//"HTTP1.1 200 OK\r\n" + "Content-Type: text/html;charset=UTF-8\r\n\r\n" +
-//        """
-//                    <!DOCTYPE html>
-//                    <html lang="en">
-//                    <head>
-//                        <meta charset="UTF-8">
-//                        <title>Fucking Title</title>
-//                    </head>
-//                    <body>
-//                """ +
-//        username + " " + password +
-//        """
-//                    <Input type="button" value="按钮">
-//                    </body>
-//                    </html>
-//                """;

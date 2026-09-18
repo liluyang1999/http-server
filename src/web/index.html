@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="zh-CN">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>HTTP 算术实验室</title>
+<style>
+:root{font:16px/1.6 system-ui,sans-serif;color:#142a3d;background:#f1f5f8}
+*{box-sizing:border-box}body{max-width:1060px;margin:auto;padding:48px 24px}h1{font-size:2.2rem;line-height:1.2;margin:.5rem 0 1rem}h2{font-size:1.15rem;margin-top:0}
+.kicker{letter-spacing:.15em;color:#326c78;font-weight:700}.intro{max-width:720px;color:#425e70}
+main{display:grid;grid-template-columns:1fr 1.1fr;gap:24px;margin-top:28px}
+section{background:white;border:1px solid #d9e4eb;border-radius:16px;padding:24px}label{display:block;margin-top:16px;font-weight:600}
+input,select,button{font:inherit;width:100%;border-radius:8px;padding:10px 12px;border:1px solid #b8cbd5;background:white;color:inherit}
+input:focus-visible,select:focus-visible,button:focus-visible{outline:3px solid #eba846;outline-offset:3px}
+button{margin-top:24px;background:#145e69;color:white;font-weight:700;cursor:pointer;border-color:#145e69}button:disabled{opacity:.6;cursor:wait}
+pre{white-space:pre-wrap;overflow-wrap:anywhere;background:#edf3f6;padding:16px;border-radius:8px;font-size:.9rem}
+#result{font-size:1.05rem;font-weight:700;min-height:3em}small,footer{color:#425e70}footer{margin-top:28px;font-size:.9rem}
+@media(max-width:700px){body{padding:24px 16px}main{grid-template-columns:1fr}h1{font-size:1.8rem}}
+</style>
+<header><div class="kicker">JAVA · HTTP · 实验 01</div><h1>从一次计算，看懂一次请求</h1>
+<p class="intro">输入两个数，选择传输方式，观察请求与真实响应。GET 把参数放在路径中；POST 发送 JSON。所有计算都由当前 Java 服务完成。</p></header>
+<main>
+<section><h2>构造请求</h2><form id="calculator">
+<label for="left">第一个数</label><input id="left" name="left" type="number" step="any" value="7" required>
+<label for="operation">运算</label><select id="operation"><option value="add">加法 +</option><option value="subtract">减法 −</option><option value="multiply">乘法 ×</option><option value="divide">除法 ÷</option></select>
+<label for="right">第二个数</label><input id="right" name="right" type="number" step="any" value="8" required>
+<label for="method">请求方式</label><select id="method"><option>GET</option><option>POST</option></select>
+<button id="submit" type="submit">发送请求</button>
+</form><p><small>试试除以 0：服务应返回 400，而不是 Infinity。</small></p></section>
+<section><h2>观察响应</h2><p id="result" role="status" aria-live="polite">尚未发送请求。</p>
+<h2>请求内容</h2><pre id="request">—</pre><h2>响应状态、类型与正文</h2><pre id="response">—</pre>
+<p><small>状态行和响应头属于 HTTP 协议；正文只包含计算结果或错误说明。</small></p></section>
+</main>
+<footer>本地教学服务 · 仅监听 127.0.0.1 · 完整学习路线见仓库 docs/ · 数值使用 Java double，可能存在浮点舍入误差。</footer>
+<script>
+const form=document.getElementById('calculator');
+form.addEventListener('submit',async event=>{
+ event.preventDefault();
+ const a=document.getElementById('left').valueAsNumber,b=document.getElementById('right').valueAsNumber;
+ const result=document.getElementById('result'), response=document.getElementById('response'),button=document.getElementById('submit');
+ if(!Number.isFinite(a)||!Number.isFinite(b)){result.textContent='请输入两个有限数值。';return;}
+ const operation=document.getElementById('operation').value,method=document.getElementById('method').value;
+ const path=method==='GET'?'/'+operation+'/'+encodeURIComponent(a)+'/'+encodeURIComponent(b):'/calculate';
+ const body=JSON.stringify({operation,arguments:[a,b]});
+ document.getElementById('request').textContent=method+' '+path+(method==='POST'?'\nContent-Type: application/json\n\n'+body:'');
+ response.textContent='等待响应…';result.textContent='请求发送中…';button.disabled=true;
+ const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),12000);
+ try{
+  const reply=await fetch(path,{method,signal:controller.signal,...(method==='POST'?{headers:{'Content-Type':'application/json'},body}:{})});
+  const text=await reply.text();
+  response.textContent=reply.status+' '+reply.statusText+'\nContent-Type: '+reply.headers.get('Content-Type')+'\n\n'+text;
+  result.textContent=reply.ok?'计算完成。':'服务返回错误，请检查输入。';
+ }catch(error){response.textContent=error.name==='AbortError'?'请求超时。':'连接失败，请确认 Java 服务仍在运行。';result.textContent='未取得响应，可以重试。';}
+ finally{clearTimeout(timer);button.disabled=false;}
+});
+</script>
+</html>

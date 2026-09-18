@@ -12,7 +12,7 @@ public class User {
 
     public User() {
         this.username = "user1";
-        this.password = "123456";
+        this.password = null; // Compatibility field; this example has no password authentication.
         this.gender = "Female";
         this.isVIP = Boolean.TRUE;
     }
@@ -60,7 +60,6 @@ public class User {
     public String toString() {
         return "User{" +
                 "username='" + username + '\'' +
-                ", password='" + password + '\'' +
                 ", gender='" + gender + '\'' +
                 ", isVIP=" + isVIP +
                 '}';

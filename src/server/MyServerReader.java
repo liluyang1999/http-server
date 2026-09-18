@@ -1,69 +1,36 @@
 package server;
 
+import java.io.IOException;
 import java.io.InputStream;
-import java.util.Enumeration;
+import java.lang.reflect.Constructor;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.Properties;
 
-//服务器启动时候读取文件信息
-//配置文件 -> 请求名字-真实类名字
-public class MyServerReader {
-
-    //collection map
-    private static Map<String, String> configMap;
-
-    private static Map<String, HttpServlet> controllerMap;
-
-    static {
-        try {
-            MyServerReader.configMap = new HashMap<>();
-            MyServerReader.controllerMap = new HashMap<>();
-
-            Properties prop = new Properties();
-            InputStream is = Thread.currentThread().getContextClassLoader().getResourceAsStream("./web.properties");
-            prop.load(is);
-            Enumeration<?> en = prop.propertyNames();
-            while (en.hasMoreElements()) {
-                String key = (String) en.nextElement();
-                String value = prop.getProperty(key);
-                configMap.put(key, value);
+/** Immutable route table; controllers are created per request, not shared between workers. */
+public final class MyServerReader {
+    private static final Map<String, Constructor<? extends HttpServlet>> ROUTES = load();
+    private MyServerReader() {}
+    private static Map<String, Constructor<? extends HttpServlet>> load() {
+        Properties properties = new Properties();
+        try (InputStream input = MyServerReader.class.getResourceAsStream("/web.properties")) {
+            if (input == null) throw new IOException("Missing web.properties on classpath");
+            properties.load(input);
+            Map<String, Constructor<? extends HttpServlet>> routes = new HashMap<>();
+            for (String name : properties.stringPropertyNames()) {
+                Class<? extends HttpServlet> type = Class.forName(properties.getProperty(name).trim()).asSubclass(HttpServlet.class);
+                routes.put(name, type.getConstructor());
             }
-
-            assert is != null;
-            is.close();
-        } catch (Exception e) {
-            e.printStackTrace();
+            return Map.copyOf(routes);
+        } catch (IOException | ReflectiveOperationException | ClassCastException e) {
+            throw new ExceptionInInitializerError(e);
         }
     }
-
+    public static void validate() { if (ROUTES.isEmpty()) throw new IllegalStateException("No routes configured"); }
     public static HttpServlet getController(String requestName) {
-        //根据请求的名字找到对应的资源类下的方法
-        //index.jsp -> controller
-        //参考说明书 读取配置文件 通过请求名得到真实类全名
-        HttpServlet controller = controllerMap.get(requestName);
-
-        if (controller == null) {
-            System.out.println("没有发现，去配置里拿。。");
-            try {
-                String className = configMap.get(requestName);
-                //通过类名反射加载，得到实体后存入缓存Map中
-                if (className != null) {
-                    Class<?> clazz = Class.forName(className);
-                    controller = (HttpServlet) clazz.getConstructor().newInstance();
-                    controllerMap.put(requestName, controller);
-                } else {
-                    return null;
-                }
-            } catch (Exception e) {
-                e.printStackTrace();
-            }
-            System.out.println("Controller: " + controller);
-        } else {
-            System.out.println("直接拿到：" + controller);
-        }
-
-        return controller;
+        Constructor<? extends HttpServlet> constructor = ROUTES.get(requestName);
+        if (constructor == null) return null;
+        try { return constructor.newInstance(); }
+        catch (ReflectiveOperationException e) { throw new IllegalStateException("Cannot instantiate configured controller", e); }
     }
-
 }

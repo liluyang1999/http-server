@@ -1,87 +1,49 @@
-import com.sun.net.httpserver.HttpServer;
-import com.sun.net.httpserver.HttpsConfigurator;
-import com.sun.net.httpserver.HttpsParameters;
-import com.sun.net.httpserver.HttpsServer;
-
-import javax.net.ssl.*;
-import java.io.FileInputStream;
-import java.net.InetAddress;
-import java.net.InetSocketAddress;
-import java.security.KeyStore;
-import java.util.HashSet;
+import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Set;
-import java.util.concurrent.Executor;
-import java.util.concurrent.Executors;
+import java.util.concurrent.CountDownLatch;
 
-public class Main {
-
+public final class Main {
+    public static final Set<String> operations = Arithmetic.OPERATIONS;
+    private Main() {}
     public static void main(String[] args) throws Exception {
-        startHttpServer();
-        startHttpsServer();
-    }
-
-    public static void startHttpServer() throws Exception {
-        MyHttpHandler myHttpHandler = new MyHttpHandler();
-        System.out.println("Start the HTTP Server...");
-        HttpServer httpServer = HttpServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"),8081), 0);
-        httpServer.createContext("/", myHttpHandler);
-        Executor executor = Executors.newCachedThreadPool();
-        httpServer.setExecutor(executor);
-        httpServer.start();
-        System.out.println("HTTP server starts successfully, port:8081" + "\n");
-    }
-
-    public static void startHttpsServer() throws Exception {
-        MyHttpHandler myHttpHandler = new MyHttpHandler();
-        System.out.println("Start the HTTPS Server...");
-        HttpsServer httpsServer = HttpsServer.create(new InetSocketAddress(InetAddress.getByName("127.0.0.1"), 8082), 0);
-        httpsServer.createContext("/", myHttpHandler);
-        KeyStore keyStore = KeyStore.getInstance("JKS");   //build the key store
-        keyStore.load(new FileInputStream("./server.p12"), "123456".toCharArray()); //load the certificate
-
-        KeyManagerFactory factory = KeyManagerFactory.getInstance("SunX509"); //build the factory of key management
-        factory.init(keyStore, "123456".toCharArray());
-        KeyManager[] keyManagers = factory.getKeyManagers();
-
-        TrustManagerFactory trustManagerFactory = TrustManagerFactory.getInstance("SunX509");
-        trustManagerFactory.init(keyStore);
-        TrustManager[] trustManagers = trustManagerFactory.getTrustManagers();
-
-        SSLContext sslContext = SSLContext.getInstance("SSLv3");
-        sslContext.init(keyManagers, trustManagers, null);
-        httpsServer.setHttpsConfigurator(new HttpsConfigurator(sslContext) {
-            @Override
-            public void configure(HttpsParameters params) {
-                try
-                {
-                    //Initialise the SSL context
-                    SSLContext sslContext = SSLContext.getDefault ();
-                    SSLEngine engine = sslContext.createSSLEngine ();
-                    params.setNeedClientAuth (false);
-                    params.setCipherSuites (engine.getEnabledCipherSuites());
-                    params.setProtocols (engine.getEnabledProtocols());
-
-                    //Achieve the default parameters
-                    SSLParameters defaultSSLParameters = sslContext.getDefaultSSLParameters ();
-                    params.setSSLParameters ( defaultSSLParameters );
-                } catch (Exception e) {
-                    e.printStackTrace();
-                }
+        int port = 8081;
+        Integer tlsPort = null;
+        Path keyStore = null;
+        String passwordVariable = "HTTP_TLS_PASSWORD";
+        Set<String> seen = new java.util.HashSet<>();
+        for (int i = 0; i < args.length; i++) {
+            if ("--help".equals(args[i])) {
+                System.out.println("Main [--port 8081] [--https-port 8082 --keystore file.p12 --password-env HTTP_TLS_PASSWORD]");
+                return;
             }
-        });
-        httpsServer.start();
-        System.out.println("HTTPS server starts successfully, port:8082" + "\n");
-    }
-
-    public static final Set<String> operations = new HashSet<>() {
-        {
-            add("add");
-            add("subtract");
-            add("multiply");
-            add("divide");
+            String option = args[i];
+            if (!seen.add(option) || i + 1 == args.length) throw new IllegalArgumentException("Duplicate option or missing value: " + option);
+            String value = args[++i];
+            switch (option) {
+                case "--port" -> port = parsePort(value);
+                case "--https-port" -> tlsPort = parsePort(value);
+                case "--keystore" -> keyStore = Path.of(value);
+                case "--password-env" -> passwordVariable = value;
+                default -> throw new IllegalArgumentException("Unknown option: " + option);
+            }
         }
-    };
-
-
+        if (tlsPort == null && keyStore != null) throw new IllegalArgumentException("--keystore requires --https-port");
+        String secret = tlsPort == null ? null : System.getenv(passwordVariable);
+        char[] password = secret == null ? null : secret.toCharArray();
+        ServerRuntime runtime;
+        try { runtime = ServerRuntime.start(port, tlsPort, keyStore, password); }
+        finally { if (password != null) Arrays.fill(password, '\0'); }
+        Runtime.getRuntime().addShutdownHook(new Thread(runtime::close, "http-shutdown"));
+        System.out.println("HTTP ready: http://127.0.0.1:" + runtime.httpPort());
+        if (runtime.httpsPort() >= 0) System.out.println("HTTPS ready: https://localhost:" + runtime.httpsPort());
+        try { new CountDownLatch(1).await(); }
+        catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+        finally { runtime.close(); }
+    }
+    private static int parsePort(String value) {
+        int port = Integer.parseInt(value);
+        if (port < 0 || port > 65535) throw new IllegalArgumentException("Port must be 0..65535");
+        return port;
+    }
 }
-

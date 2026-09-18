@@ -1,86 +1,30 @@
-import com.sun.net.httpserver.Headers;
 import com.sun.net.httpserver.HttpExchange;
-
 import java.io.IOException;
 import java.io.OutputStream;
-import java.time.Instant;
-import java.util.Date;
+import java.nio.charset.StandardCharsets;
 
-public class HandlerUtil {
-
-    public void sendContentByPlain(HttpExchange exchange, Number result) {
-        Headers responseHeaders = exchange.getResponseHeaders();
-        responseHeaders.set("Date", Date.from(Instant.now()).toString());
-        responseHeaders.set("Protocol", exchange.getProtocol());
-        responseHeaders.set("Content-Type", "text/plain");
-        responseHeaders.set("expires", "-1");
-        try {
-            exchange.sendResponseHeaders(Status.OK.getCode(), 0);
-            OutputStream responseBody = exchange.getResponseBody();
-            String content = exchange.getProtocol() + " "
-                    + Status.OK.getCode() + " "+ Status.OK.getStatus() + "\n" +
-                    """
-                     Content-Type: text/plain
-                          
-                     """
-                    + result + "\n";
-            responseBody.write(content.getBytes());
-            responseBody.close();
-        } catch (IOException e) {
-            sendErrorContent(exchange, Status.IE, MyHttpHandler.INTERNAL_SERVER_ERROR);
+/** HTTP framing belongs to HttpExchange; only representation bytes go into its body. */
+public final class HandlerUtil {
+    public void sendContentByPlain(HttpExchange exchange, Number result) throws IOException {
+        send(exchange, 200, "text/plain; charset=utf-8", result + "\n");
+    }
+    public void sendContentByJson(HttpExchange exchange, Number result) throws IOException {
+        send(exchange, 200, "application/json; charset=utf-8", "{\"result\":" + result + "}\n");
+    }
+    public void sendErrorContent(HttpExchange exchange, Status status, String description) throws IOException {
+        send(exchange, status.getCode(), "text/plain; charset=utf-8", description + "\n");
+    }
+    public void send(HttpExchange exchange, int status, String type, String content) throws IOException {
+        byte[] bytes = content.getBytes(StandardCharsets.UTF_8);
+        exchange.getResponseHeaders().set("Content-Type", type);
+        exchange.getResponseHeaders().set("Cache-Control", "no-store");
+        exchange.getResponseHeaders().set("X-Content-Type-Options", "nosniff");
+        exchange.getResponseHeaders().set("Connection", "close");
+        if ("HEAD".equals(exchange.getRequestMethod())) {
+            exchange.sendResponseHeaders(status, -1);
+        } else {
+            exchange.sendResponseHeaders(status, bytes.length);
+            try (OutputStream output = exchange.getResponseBody()) { output.write(bytes); }
         }
     }
-
-    public void sendContentByJson(HttpExchange exchange, Number result) {
-        Headers responseHeaders = exchange.getResponseHeaders();
-        responseHeaders.set("Date", Date.from(Instant.now()).toString());
-        responseHeaders.set("Protocol", exchange.getProtocol());
-        responseHeaders.set("Content-Type", "application/json");
-        responseHeaders.set("Expires", "-1");
-        try {
-            exchange.sendResponseHeaders(Status.OK.getCode(), 0);
-            OutputStream responseBody = exchange.getResponseBody();
-            String content = exchange.getProtocol() + " "
-                    + Status.OK.getCode() + " "+ Status.OK.getStatus() + "\n" +
-                    """
-                     Content-Type: application/json
-                          
-                     """
-                     + toJsonFormat(result) + "\n";
-            responseBody.write(content.getBytes());
-            responseBody.close();
-        } catch (IOException e) {
-            sendErrorContent(exchange, Status.IE, MyHttpHandler.INTERNAL_SERVER_ERROR);
-        }
-    }
-
-    public void sendErrorContent(HttpExchange exchange, Status status, String description) {
-        Headers responseHeaders = exchange.getResponseHeaders();
-        responseHeaders.set("Protocol", exchange.getProtocol());
-        responseHeaders.set("Expires", "-1");
-        try {
-            exchange.sendResponseHeaders(status.getCode(), 0);
-            OutputStream responseBody = exchange.getResponseBody();
-            String content = exchange.getProtocol() + " "
-                            + status.getCode() + " "+ status.getStatus() + "\n"
-                            + "\n" + description + "\n";
-            responseBody.write(content.getBytes());
-            responseBody.close();
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-    }
-
-    private String toJsonFormat(Number result) {
-        return "{" + "\n"
-                + "   \"result\": " + result + "\n"
-                + "}" + "\n";
-    }
-
-    public static class Params {
-        public String operation;
-        public Double[] arguments = new Double[10];
-    }
-
 }
-
